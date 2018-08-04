@@ -151,7 +151,8 @@ end
 function temporal_filter(rb::RingBuffer, 
                             block::FrameBlock, 
                             filter::Function, 
-                            frame0::Frame64)::Frame64
+                            frame0::Frame64,
+                            augment_motion = true)::Frame64
     out = Frame64(rb.dim...)
     
     # for each pixel position, collect time-series
@@ -197,7 +198,8 @@ function temporal_filter(rb::RingBuffer,
         end
         
         # apply Wadhwah's non-linear filtering
-        out[i,j] = filter(time_series) - frame0[i,j]
+        filtered = filter(time_series)
+        out[i,j] = augment_motion ? filtered-frame0[i,j] : filtered
     end
     
     return out
@@ -206,7 +208,8 @@ end
 function process_frame(rb::RingBuffer, 
                         α::Float64, n_laplacian::Int64, 
                         filter::Function, filter_support::Int64, 
-                        frame0::Frame64)
+                        frame0::Frame64,
+                        augment_motion = true)
     out = zeros(rb.dim...)
     last_level = copy(rb.frame_block)
     f0 = copy(frame0)
@@ -246,10 +249,14 @@ function process_frame(rb::RingBuffer,
         
         # band now has the bandpassed frame block and we
         # can temporally filter it
-        filtered_band = temporal_filter(rb, band, filter, f0_band)
+        filtered_band = temporal_filter(rb, band, filter, f0_band, augment_motion)
         
-        # accumulate to the final frame we're composing
-        out += band[rb.current+1] + α .* filtered_band
+        # linearly decrease amplification factors as frequency
+        # bands increase
+        a_ = (n_laplacian-i)*α/n_laplacian
+        
+        # accumulate to the final frame we're composing 
+        out += band[rb.current+1] + a_ .* filtered_band
     end
     
     return out
@@ -258,7 +265,9 @@ end
 function process_video(frame_grabber::Function, n_frames::Int64,
                         α::Float64, n_laplacian::Int64, 
                         filter::Function, filter_support::Int64,
-                        path::String)
+                        path::String,
+                        channel::Int64, augment_motion = true)
+    
     # target path
     if(!isdir(path)) mkdir(path) end
     
@@ -288,15 +297,21 @@ function process_video(frame_grabber::Function, n_frames::Int64,
     
     # main loop: process -> output -> load frame -> advance.
     # we'll need an extra step after this loop for the last frame
-    for i in 1:(n_frames_out-1)
-        y_ = process_frame(Y, α, n_laplacian, filter, filter_support, frame0)
+    for k in 1:(n_frames_out-1)
+        
+        cur = [Y, I, Q]
+        magnified = process_frame(cur[channel], α, n_laplacian, filter, filter_support, frame0, augment_motion)
+        
+        y = channel == 1 ? magnified : Y.frame_block[Y.current+1]
+        i = channel == 2 ? magnified : I.frame_block[I.current+1]
+        q = channel == 3 ? magnified : Q.frame_block[Q.current+1]
         
         # TODO: rebuild three-channel frame before outputting it
-        r, g, b = YIQtoRGB(y_, I.frame_block[I.current+1], Q.frame_block[Q.current+1])
-        output_single_frame((r,g,b), i, path, false)
+        r, g, b = YIQtoRGB(y, i, q)
+        output_single_frame((r,g,b), k, path, false)
         
         # load next and advance buffers
-        next_y, next_i, next_q = frame_grabber(filter_support+i)
+        next_y, next_i, next_q = frame_grabber(filter_support+k)
         advance_block(Y, next_y)
         advance_block(I, next_i)
         advance_block(Q, next_q)

@@ -1,0 +1,2 @@
+convert -resize 25% -delay 3 -loop 0 frame{1..296}.png test3.gif
+convert -resize 25% -delay 3 -loop 0 `ls -v` test3.gif
