@@ -132,6 +132,19 @@ function advance_block(rb::RingBuffer, new_frame::Frame64)
     rb.discard = (rb.discard + 1) % rb.blocksz
 end
 
+#######################
+####### FILTERS #######
+#######################
+function identity_1(f::Vector{Float64})
+    @assert length(f) == 1
+    return f[1]
+end
+
+function box_5(f::Vector{Float64})
+    @assert length(f) == 5
+    return sum(f)/5
+end
+
 #############################################
 ####### EULERIAN MOTION MAGNIFICATION #######
 #############################################
